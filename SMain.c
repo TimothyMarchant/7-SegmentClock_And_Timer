@@ -9,7 +9,7 @@
  * Also this project only uses 5 I/O pins and uses the 74hc165 and 74hc595 shift registers for expanding I/O.
  * And a 7-segment display is being used.
  * As of right now I consider this project to be complete, I may in the future decide to maybe add an alarm setting?
- * Assuming I have enough space to work with (this version uses 90% of programmable memory).
+ * Assuming I have enough space to work with (this version uses 91% of programmable memory).
  */
 
 //initialize functions.
@@ -271,6 +271,13 @@ void DisplayTMR(void) {
 void ChangeTimedigit(_Bool isClock, unsigned char digit, signed char number[], _Bool isIncrement) {
     if (isIncrement) {
         number[digit]++;
+        //We need this for when you increment the first digit (which can only 1 or 2 for 24hr clock)
+        //So we do this check to make sure the second digit isn't greater than 4.  If it is just set it to 3.
+        if (isClock&&digit==0){
+            if (number[0]==2&&number[1]>3){
+                number[1]=3;
+            }
+        }
     } else {
         //modulo in c apparently is not the same as it is in mathematics.
         //so when we reach 0 we can't decrement any further.
@@ -283,7 +290,7 @@ void ChangeTimedigit(_Bool isClock, unsigned char digit, signed char number[], _
     if (digit == 0 && isClock) {
         number[digit] %= 3;
     } else if (digit == 1 && number[0] == 2 && isClock) {
-        number[digit] %= 5;
+        number[digit] %= 4;
     } else if (digit == 2) {
         number[digit] %= 6;
     } else {
@@ -396,7 +403,6 @@ void buttonmenu(void) {
 void main(void) {
     //initialize our I/O pins and the TMR0 module.
     ANSELA = 0;
-    PORTA = 0;
     //Q7 is configured as an input and everything else is an output.
     TRISA = 0b00001010;
     T0EN = 1;
@@ -422,9 +428,10 @@ void main(void) {
     TMR1IE=1;
     TMR1=15536;
     while (1) {
-        //since we don't have any extra pins we have to poll in order to check inputs.
-        //when I find the time, I will try to use RA3 as an input and use only 3 other pins for the shift registers.
+        //we poll for inputs.
         buttonmenu();
         DisplayTime();
     }
+}
+
 }
