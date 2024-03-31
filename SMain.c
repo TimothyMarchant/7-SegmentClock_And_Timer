@@ -5,23 +5,25 @@
  * Created on March 13, 2024, 11:58 PM
  * Formally this project was my first real attempt at a real embedded project with a pic microcontroller
  * I'm not expecting that the timer modules are that accurate for long periods of time,
- * I noticed when I try to match up with TimerMode, it seems like it slowly drifted faster than my phone's timer.
- * Also this project only uses 5 I/O pins and uses the 74hc165 and 74hc595 shift registers.
+ * The little bit of testing I did do to check for drifting it's kinda hard to tell if there was any noticeable drift.
+ * Also this project only uses 5 I/O pins and uses the 74hc165 and 74hc595 shift registers for expanding I/O.
+ * And a 7-segment display is being used.
+ * As of right now I consider this project to be complete, I may in the future decide to maybe add an alarm setting?
+ * Assuming I have enough space to work with (this version uses 90% of programmable memory).
  */
 
 //initialize functions.
-unsigned char Shift_In(void);
+void Shift_In(void);
 void Shift_Out(unsigned char);
 unsigned char WhichNumber(unsigned char);
 void displayDigit(unsigned char, unsigned char);
 void DisplayTime(void);
 void DisplayTMR(void);
-void DisplayNumber(unsigned int);
 void ChangeTimedigit(_Bool, unsigned char, signed char[], _Bool);
 _Bool ConfigureTime(_Bool);
-void TimerButtonMenu(unsigned char);
+void TimerButtonMenu(void);
 void TimerMode(void);
-void buttonmenu(unsigned char);
+void buttonmenu(void);
 void main(void);
 //include CONFIG file.
 #include "CONFIG.h"
@@ -41,7 +43,7 @@ void main(void);
 //we can reuse the clock pin of the 74hc595 shift register.
 //Since the 74hc595 only outputs when the RCLK pin is set high.
 #define CLK_LATA LATA2
-//read input from PortA.  I want to make this RA3, but when I tried doing so I had problems (even after turning off the MCRLE bit).
+//reads inputs from Q7 pin of 74hc165 shift register.
 #define Q7_PORT PORTAbits.RA1
 //I like having HIGH and LOW.
 #define HIGH 1
@@ -56,6 +58,7 @@ unsigned int TMR2count = 0;
 unsigned int TimerTime = 0;
 //bit to determine if a button is being held down.
 __bit Pressed=0;
+unsigned char data=0;
 //7-segment binary representation.
 enum SegmentValues {
     /*the datasheet has segments that have a corresponding letter associated with it.
@@ -79,17 +82,21 @@ enum SegmentValues {
 //the interrupt manager only uses TMR0 and TMR2, I plan on using TMR1 for handling debouncing.
 //Also when I can free up another pin use it to check if there is a input without polling 
 void __interrupt() ISR(void) {
-    if (TMR0IF == 1) {
+    if (TMR0IF) {
         TMR0count++;
         TMR0 = 131;
 
         if (TMR0count == 2000) {
             TMR0count = 0;
             RTCSeconds++;
+            //there are 86400 seconds in a day.
+            if (RTCSeconds==86400){
+                RTCSeconds=0;
+            }
         }
         TMR0IF = 0;
     }
-    if (TMR2IF == 1) {
+    if (TMR2IF) {
         TMR2count++;
         TMR2 = 131;
         if (TMR2count == 1000) {
@@ -99,9 +106,19 @@ void __interrupt() ISR(void) {
         }
         TMR2IF = 0;
     }
+    //for debouncing.  The delay is 0.050 seconds.  Which is more than enough for the required delay.
+    if (TMR1IF){
+        TMR1ON=0;
+        TMR1IF=0;
+        TMR1=15536;
+    }
 }
 //this method reads in inputs from the 74hc165 shift register.
-unsigned char Shift_In(void) {
+void Shift_In(void) {
+    //while TMR1 is active that means we need to wait so that we don't deal with debouncing upon letting go of the button.
+    if (TMR1ON){
+        data=0;
+    }
     //latch pin hold low to sample.
     SHLD_LATA = LOW;
     //a delay is required for sampling from the latch pin.  The minimum time required for it is greater than the
@@ -109,7 +126,6 @@ unsigned char Shift_In(void) {
     __delay_us(10);
     //end sampling.
     SHLD_LATA = HIGH;
-    unsigned char data = 0;
     for (signed char i = 7; i >= 0; i--) {
         //read Q7.
         if (Q7_PORT == HIGH) {
@@ -128,14 +144,13 @@ unsigned char Shift_In(void) {
     }
     //we don't want to keep taking in inputs while a button is still pressed.
     else if (data!=0&&Pressed){
-        return 0;
+        data=0;
     }
-    //normally we would have to worry about debouncing, but it seems there's
-    //a long enough delay without one?
-    else {
+    //if the data=0 and Pressed=1, then we can set Pressed=0 and turn on the debouncing timer.
+    else if (Pressed){
         Pressed=0;
+        TMR1ON=1;
     }
-    return data;
 }
 //this method shifts out data to the two 74hc595 shift registers.
 void Shift_Out(unsigned char data) {
@@ -190,12 +205,6 @@ void displayDigit(unsigned char number, unsigned char digit) {
     RCLK_LATA = 1;
 }
 
-void CheckifValidSeconds(void) {
-    //there are 86400 seconds in a day.
-    if (RTCSeconds == 86400) {
-        RTCSeconds = 0;
-    }
-}
 //24 hour clock format; displays current time.
 void DisplayTime(void) {
     //this loop runs four times, we start at the most significant digit and go to the right.
@@ -258,28 +267,6 @@ void DisplayTMR(void) {
         digit = digit >> 1;
     }
 }
-//generic displaying of a number.  Not called, but left here in case it's needed.
-void DisplayNumber(unsigned int number) {
-    //this loop runs for times, we start at the most significant digit and go to the right.
-    //Since this method ends as soon as the loop ends we don't have to reset the digit variable.
-    unsigned char digit = 0b10000000;
-    for (signed char i = 3; i >= 0; i--) {
-        RCLK_LATA = LOW;
-        int j = 1;
-        //if you're wondering if it would be easier to declare j outside of the loop and divide at the end of each
-        //iteration, it actually takes up an extra 30 bytes of flash storage, I'm not joking.
-        for (unsigned char l = 0; l < i; l++) {
-            j *= 10;
-        }
-        //shift out the bits in the shift register.  We use the mod operator so that we know which number to pick
-        //when we call the whichnumber method.
-        Shift_Out(WhichNumber((unsigned char) ((number / j) % 10)));
-        Shift_Out(digit);
-        digit = digit >> 1;
-        RCLK_LATA = HIGH;
-
-    }
-}
 //increment or decrement the currently selected number.
 void ChangeTimedigit(_Bool isClock, unsigned char digit, signed char number[], _Bool isIncrement) {
     if (isIncrement) {
@@ -309,9 +296,9 @@ void ChangeTimedigit(_Bool isClock, unsigned char digit, signed char number[], _
 _Bool ConfigureTime(_Bool isClock) {
     signed char number[4] = {0};
     signed char currentdigit = 0;
-    unsigned char data=0b00000000;
+    data=0;
     while (data != 0b00000001){
-        data=Shift_In();
+        Shift_In();
         //display the currently selected digit.
         displayDigit(WhichNumber(number[currentdigit]), 0b10000000>>currentdigit);
         switch (data) {
@@ -345,7 +332,8 @@ _Bool ConfigureTime(_Bool isClock) {
     return 1;
 }
 
-void TimerButtonMenu(unsigned char data) {
+void TimerButtonMenu(void) {
+    Shift_In();
     //pause by
     if (data == 0b10000000) {
         TMR2ON = !TMR2ON;
@@ -364,16 +352,33 @@ void TimerMode(void) {
     if (!ConfigureTime(0)) {
         return;
     }
-    //Setup timer2 module here.
+    //Start Timer 2.
     TMR2ON = 1;
     while (TimerTime != 0) {
         DisplayTMR();
-        TimerButtonMenu(Shift_In());
+        TimerButtonMenu();
     }
+    //Turn off timer 2.
     TMR2ON = 0;
+    unsigned int i=0;
+    //this is to indicate that the timer has ended and is waiting for the user to acknowledge that it has ended.
+    while (data!=0b00000001){
+        Shift_In();
+        if (i<1000){
+            DisplayTMR();
+        }
+        else {
+            displayDigit(0,0);
+            if (i==2000){
+                i=0;
+            }
+        }
+        i++;
+    }
 }
 //do something based on which button is pressed.  This method allows the user to set the time and use timer mode.
-void buttonmenu(unsigned char data) {
+void buttonmenu(void) {
+    Shift_In();
     //Set time button
     if (data == 0b10000000) {
         displayDigit(Zero,0b10000000);
@@ -388,7 +393,6 @@ void buttonmenu(unsigned char data) {
     }
 
 }
-
 void main(void) {
     //initialize our I/O pins and the TMR0 module.
     ANSELA = 0;
@@ -411,10 +415,16 @@ void main(void) {
     PEIE = 1;
     TMR0IE = 1;
     TMR0IF = 0;
+    //Setup Timer1 module
+    T1CON=0b01110000;
+    T1GCON=0;
+    TMR1IF=0;
+    TMR1IE=1;
+    TMR1=15536;
     while (1) {
         //since we don't have any extra pins we have to poll in order to check inputs.
         //when I find the time, I will try to use RA3 as an input and use only 3 other pins for the shift registers.
-        buttonmenu(Shift_In());
+        buttonmenu();
         DisplayTime();
     }
 }
