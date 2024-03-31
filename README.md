@@ -11,13 +11,15 @@ The actual supplies I ended up using were the following (excludes wires).
 
 * 4 PN2222TF transistors (NPN)
 
-* 3 0.1 uF capacitors (two for the shift register, one for the minimun circuitry for the PIC)
+* 4 0.1 uF capacitors (two for the shift register, two for the minimum circuitry for the PIC)
 
 * 5 22k OHM resistors (4 are used with the transistors and one is used for the colon of the 7-segment display).
 
-* 8 10k OHM resistors
+* 9 10k OHM resistors (one is used for the minimum circuitry for the PIC)
 
 * 10 10k/4.7k ohm resistors (either value works, for the buttons I use 4.7k because that's what I had out).
+
+* 1 100-470 ohm resistor for minimum circuitry for the PIC
 
 * 6 buttons.
 
@@ -25,3 +27,7 @@ The actual supplies I ended up using were the following (excludes wires).
 
 * 1 SN74HC165N Shift Register
 
+I also uploaded a schematic that you can view.  It's named 7_segment_display_schematic.pdf. 
+The required connections for the PIC are not included as they're in the datasheet and unrelated to this project (you are suppose to make these connections for any project you do with the microcontroller).
+
+Thanks for viewing my project.
