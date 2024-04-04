@@ -9,7 +9,7 @@
  * Also this project only uses 5 I/O pins and uses the 74hc165 and 74hc595 shift registers for expanding I/O.
  * And a 7-segment display is being used.
  * As of right now I consider this project to be complete, I may in the future decide to maybe add an alarm setting?
- * Assuming I have enough space to work with (this version uses 91% of programmable memory).
+ * Assuming I have enough space to work with (this version uses 85% of programmable memory).
  */
 
 //initialize functions.
@@ -54,6 +54,7 @@ void main(void);
 unsigned long RTCSeconds = 0;
 unsigned int TMR0count = 0;
 unsigned int TMR2count = 0;
+unsigned char TMR1count=0;
 //this is global since it makes certain things easier and also uses less overall program memory.
 unsigned int TimerTime = 0;
 //bit to determine if a button is being held down.
@@ -76,8 +77,9 @@ enum SegmentValues {
     Eight = 0b11111110,
     Nine = 0b11100110,
 };
-//The delay caused by timer0 is 0.0005 seconds
-//If the delay is 0.0005, then one second means TMR0count == 2000, 0.5 is TMR0count == 1000 and so on.
+const unsigned char digits[4]={0b00010000,0b00100000,0b01000000,0b10000000};
+//The delay caused by timer0 is 0.001 seconds
+//If the delay is 0.001, then one second means TMR0count == 1000, 0.5 is TMR0count == 500 and so on.
 //the delay for timer2 is 0.001 seconds.  So for TMR2count==1000, the delay is one second.
 //the interrupt manager only uses TMR0 and TMR2, I plan on using TMR1 for handling debouncing.
 //Also when I can free up another pin use it to check if there is a input without polling 
@@ -86,7 +88,7 @@ void __interrupt() ISR(void) {
         TMR0count++;
         TMR0 = 131;
 
-        if (TMR0count == 2000) {
+        if (TMR0count == 1000) {
             TMR0count = 0;
             RTCSeconds++;
             //there are 86400 seconds in a day.
@@ -109,15 +111,16 @@ void __interrupt() ISR(void) {
     //for debouncing.  The delay is 0.050 seconds.  Which is more than enough for the required delay.
     if (TMR1IF){
         TMR1ON=0;
-        TMR1IF=0;
         TMR1=15536;
+        TMR1IF=0;
     }
 }
 //this method reads in inputs from the 74hc165 shift register.
 void Shift_In(void) {
     //while TMR1 is active that means we need to wait so that we don't deal with debouncing upon letting go of the button.
-    if (TMR1ON){
+    if (TMR1ON==1){
         data=0;
+        return;
     }
     //latch pin hold low to sample.
     SHLD_LATA = LOW;
@@ -158,9 +161,7 @@ void Shift_Out(unsigned char data) {
     for (signed char i = 7; i >= 0; i--) {
         unsigned char temp = data;
         //most significant to least significant bit.
-        //Shift i bits to the left, then we need to put back where 
-        //we had the original bit and then shift it 	//j bits to the right.
-        //temp=(temp>>i)&0b00000001;
+        //Shift i bits to the left, then we need to shift the left most digit to the rightmost digit.
         temp = temp << i;
         temp = temp >> 7;
         if (temp==1) {
@@ -212,29 +213,31 @@ void DisplayTime(void) {
     //we need time in minutes.
     unsigned int minutes = (unsigned int) (RTCSeconds / 60);
     //an hour ranges from 0 to 24.
-    unsigned int hours = (minutes / 60) % 24;
-    minutes %= 60;
-    unsigned char digit = 0b10000000;
-    unsigned int temp = 1000;
+    //Minutes only ranges from 0 to 1439 (as RTCSeconds always resets before 1440 minutes).  So we don't need % here.
+    unsigned char hours = (unsigned char) (minutes / 60);
+    minutes%=60;
+    unsigned char temp = 10;
     for (signed char i = 3; i >= 0; i--) {
         RCLK_LATA = LOW;
-        //for displaying hours
         unsigned char number = 0;
-        if (i > 1) {
-            //Shift_Out(WhichNumber((unsigned char) (((100*hours)/temp)%10)));
-            number = (unsigned char) (((100 * hours) / temp) % 10);
-        }            //for displaying minutes
-        else {
-            //Shift_Out(WhichNumber((unsigned char) ((minutes/temp)%10)));
-            number = (unsigned char) ((minutes / temp) % 10);
+        //for displaying hours
+        if (i==1){
+            temp=10;
         }
+        if (i > 1) {
+            number = ((hours) / temp);
+        }
+        //for displaying minutes
+        else {
+            number = (unsigned char) (minutes / temp);
+        }
+        number%=10;
+        //shiftout the segments to be turned on.
         Shift_Out(WhichNumber(number));
-        //while not necessary to do this, if you want to use the colon, we need to use another output on the 74hc595 chip.
-        //alterantively you can just wire the actual display so that it's always on.
-        Shift_Out(digit);
+        //select which digit to light up.
+        Shift_Out(digits[i]);
         temp /= 10;
         RCLK_LATA = HIGH;
-        digit = digit >> 1;
     }
 }
 //timer display.
@@ -243,7 +246,6 @@ void DisplayTMR(void) {
     //for the timer there are 5999 seconds in total.
     unsigned char minutes = (TimerTime / 60);
     unsigned char seconds = (TimerTime % 60);
-    unsigned char digit = 0b10000000;
     unsigned char temp = 10;
     for (signed char i = 3; i >= 0; i--) {
         RCLK_LATA = LOW;
@@ -253,18 +255,18 @@ void DisplayTMR(void) {
         unsigned char number = 0;
         //for displaying minutes.
         if (i > 1) {
-            number = minutes / temp;
+            number = minutes;
         }            
         //for displaying seconds
         else {
-            number = seconds / temp;
+            number = seconds;
         }
+        number/=temp;
         number %= 10;
         Shift_Out(WhichNumber(number));
-        Shift_Out(digit);
+        Shift_Out(digits[i]);
         temp /= 10;
         RCLK_LATA = HIGH;
-        digit = digit >> 1;
     }
 }
 //increment or decrement the currently selected number.
@@ -273,10 +275,8 @@ void ChangeTimedigit(_Bool isClock, unsigned char digit, signed char number[], _
         number[digit]++;
         //We need this for when you increment the first digit (which can only 1 or 2 for 24hr clock)
         //So we do this check to make sure the second digit isn't greater than 4.  If it is just set it to 3.
-        if (isClock&&digit==0){
-            if (number[0]==2&&number[1]>3){
-                number[1]=3;
-            }
+        if (isClock&&digit==0&&number[0]==2&&number[1]>3){
+            number[1]=3;
         }
     } else {
         //modulo in c apparently is not the same as it is in mathematics.
@@ -319,11 +319,15 @@ _Bool ConfigureTime(_Bool isClock) {
                 break;
                 //Move to the right
             case 0b00100000:
-                currentdigit = (currentdigit + 1) % 4;
+                currentdigit = (currentdigit + 1)%4;
                 break;
                 //Move to the Left
             case 0b00010000:
-                currentdigit = (currentdigit - 1) % 4;
+                //modulo in c is not the same as it is in mathematics.  using % on negative numbers can have unintended consequences.
+                currentdigit = (currentdigit - 1);
+                if (currentdigit==-1){
+                    currentdigit=3;
+                }
                 break;
                 //exit cancel what we're doing.
             case 0b00000010:
@@ -331,10 +335,13 @@ _Bool ConfigureTime(_Bool isClock) {
                 //we don't have a case for 0b00000001 since we need to do some more stuff outside of the switch statement.
         }
     } 
+    //we do this here since we have to do this calculation in both if-else blocks.
+    unsigned char temp1=number[0]*10 + number[1];
+    unsigned char temp2=number[2]*10 + number[3];
     if (isClock) {
-        RTCSeconds = ((unsigned long) number[0]*10 + number[1])*3600 + 60 * ((unsigned long) number[2]*10 + number[3]);
+        RTCSeconds = ((unsigned long) temp1)*3600 + 60 * ((unsigned long) temp2);
     } else {
-        TimerTime = ((unsigned long) number[0]*10 + number[1])*60 + ((unsigned long) number[2]*10 + number[3]);
+        TimerTime = ((unsigned int) temp1)*60 + ((unsigned int) temp2);
     }
     return 1;
 }
@@ -395,6 +402,7 @@ void buttonmenu(void) {
     }        
     //Set Timer Mode use seperate timer module so that we can keep the original time constantly updated.
     else if (data == 0b01000000) {
+        //preload TMR2 with 131, that way we can guarantee that we get a 0.001 second delay.
         TMR2=131;
         TimerMode();
     }
@@ -405,28 +413,35 @@ void main(void) {
     ANSELA = 0;
     //Q7 is configured as an input and everything else is an output.
     TRISA = 0b00001010;
-    T0EN = 1;
+    //we want an 8-bit timer.
     T016BIT = 0;
-    T0CON1 = 0b01110110;
+    //Clock source is FOSC/4 and prescaler is 64 and TMR0 is synchronized to FOSC/4
+    T0CON1 = 0b01010110;
     //Setup timer 2.  But don't enable the module.
+    //we only need to set the prescaler, and it's 64 in this case.
     T2CONbits.T2CKPS = 0b11;
     TMR2IF = 0;
     TMR2IE = 1;
     //An interrupt is caused when TMR2==PR2 according to the datasheet.
-    //preload TMR2 with 131 since that gives the same delay as TMR0.
-    TMR2 = 131;
+    //Set PR2 to 255.
     PR2 = 0xff;
+    //preload TMR0.
     TMR0 = 131;
     GIE = 1;
     PEIE = 1;
     TMR0IE = 1;
     TMR0IF = 0;
     //Setup Timer1 module
-    T1CON=0b01110000;
-    T1GCON=0;
+    //clock source is FOSC/4 and prescaler is 8.
+    T1CON=0b00110000;
+    //we don't want this register to be used.  We don't need the timer gate functionality.
+    T1GCON=0b00000000;
+    TMR1=15536;
     TMR1IF=0;
     TMR1IE=1;
-    TMR1=15536;
+    
+    //turn on TMR0.
+    T0EN = 1;
     while (1) {
         //we poll for inputs.
         buttonmenu();
@@ -434,4 +449,3 @@ void main(void) {
     }
 }
 
-}
