@@ -5,11 +5,11 @@
  * Created on March 13, 2024, 11:58 PM
  * Formally this project was my first real attempt at a real embedded project with a pic microcontroller
  * I'm not expecting that the timer modules are that accurate for long periods of time,
- * The little bit of testing I did do to check for drifting it's kinda hard to tell if there was any noticeable drift.
+ * The little bit of testing I did do to check for drifting it's kinda hard to tell if there was any noticeable drift. 
  * Also this project only uses 5 I/O pins and uses the 74hc165 and 74hc595 shift registers for expanding I/O.
  * And a 7-segment display is being used.
  * As of right now I consider this project to be complete, I may in the future decide to maybe add an alarm setting?
- * Assuming I have enough space to work with (this version uses 85% of programmable memory).
+ * Assuming I have enough space to work with (this version uses 84% of programmable memory).
  */
 
 //initialize functions.
@@ -65,7 +65,7 @@ enum SegmentValues {
     /*the datasheet has segments that have a corresponding letter associated with it.
     For this project you can read the binary numbers like 0b A B C D E F G DP where DP=decimal point.
     if you see a 1 that means that segment is lit up, otherwise it's not used for that number.
-    the last bit is the decimal point in the digit spot.  For the current application, it is unnessary to light up.*/
+    the last bit is the decimal point in the digit spot.  For the current application, it is unnecessary to light up.*/
     Zero = 0b11111100,
     One = 0b01100000,
     Two = 0b11011010,
@@ -77,6 +77,8 @@ enum SegmentValues {
     Eight = 0b11111110,
     Nine = 0b11100110,
 };
+//These are here so that we know what to light up because the arrays hold the corresponding values.
+const unsigned char numbers[10]={Zero,One,Two,Three,Four,Five,Six,Seven,Eight,Nine};
 const unsigned char digits[4]={0b00010000,0b00100000,0b01000000,0b10000000};
 //The delay caused by timer0 is 0.001 seconds
 //If the delay is 0.001, then one second means TMR0count == 1000, 0.5 is TMR0count == 500 and so on.
@@ -119,7 +121,6 @@ void __interrupt() ISR(void) {
 void Shift_In(void) {
     //while TMR1 is active that means we need to wait so that we don't deal with debouncing upon letting go of the button.
     if (TMR1ON==1){
-        data=0;
         return;
     }
     //latch pin hold low to sample.
@@ -173,31 +174,7 @@ void Shift_Out(unsigned char data) {
         SRCLK_LATA = LOW;
     }
 }
-//this just returns the binary representation of a set of segment values for a specific number.
-unsigned char WhichNumber(unsigned char number) {
-    switch (number) {
-        case 0:
-            return Zero;
-        case 1:
-            return One;
-        case 2:
-            return Two;
-        case 3:
-            return Three;
-        case 4:
-            return Four;
-        case 5:
-            return Five;
-        case 6:
-            return Six;
-        case 7:
-            return Seven;
-        case 8:
-            return Eight;
-        case 9:
-            return Nine;
-    }
-}
+
 //Display a single digit.  Used in ConfigureTime.
 void displayDigit(unsigned char number, unsigned char digit) {
     RCLK_LATA = 0;
@@ -233,7 +210,7 @@ void DisplayTime(void) {
         }
         number%=10;
         //shiftout the segments to be turned on.
-        Shift_Out(WhichNumber(number));
+        Shift_Out(numbers[number]);
         //select which digit to light up.
         Shift_Out(digits[i]);
         temp /= 10;
@@ -263,7 +240,7 @@ void DisplayTMR(void) {
         }
         number/=temp;
         number %= 10;
-        Shift_Out(WhichNumber(number));
+        Shift_Out(numbers[number]);
         Shift_Out(digits[i]);
         temp /= 10;
         RCLK_LATA = HIGH;
@@ -307,7 +284,7 @@ _Bool ConfigureTime(_Bool isClock) {
     while (data != 0b00000001){
         Shift_In();
         //display the currently selected digit.
-        displayDigit(WhichNumber(number[currentdigit]), 0b10000000>>currentdigit);
+        displayDigit(numbers[number[currentdigit]], 0b10000000>>currentdigit);
         switch (data) {
                 //increment
             case 0b10000000:
@@ -395,10 +372,12 @@ void buttonmenu(void) {
     Shift_In();
     //Set time button
     if (data == 0b10000000) {
-        displayDigit(Zero,0b10000000);
-        //disable timer interrupt so that we can reset the current time on the clock.
-        ConfigureTime(1);
-        TMR0 = 131;
+        //Setup Clock.  If they exit do nothing, otherwise reset the timer register and reset TMR1count.
+        //the one in the method call is so the method knows we're changing the clock's time.
+        if (ConfigureTime(1)){
+            TMR0 = 131;
+            TMR1count=0;
+        }
     }        
     //Set Timer Mode use seperate timer module so that we can keep the original time constantly updated.
     else if (data == 0b01000000) {
